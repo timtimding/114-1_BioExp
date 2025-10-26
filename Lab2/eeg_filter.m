@@ -1,4 +1,4 @@
-present01=importdata('G1/BIOPAC.txt');
+present01=importdata('BIOPAC_2.txt');
 %present02=importdata('EEG_raw.txt');
 
 %% Basic Parameters
@@ -75,25 +75,25 @@ eeg_alpha_closed = filtfilt(b, a, raw_closed);
 %    CenterFrequency = 15 / Fnyq, ...
 %    QualityFactor = 2, FilterOrder = 2);
 
-[d, c] = butter(5, [12 30]/(fs/2), 'bandpass');
+[d, c] = butter(4, [12 30]/(fs/2), 'bandpass');
 %eeg_beta = filtfilt(d, c, raw);
 eeg_beta_open = filtfilt(d, c, raw_open);
 eeg_beta_closed = filtfilt(d, c, raw_closed);
 
 % Delta: Center frequency = 1.3
-[f, e] = designNotchPeakIIR(Response = "peak",...
-    CenterFrequency = 1.3 / Fnyq, ...
-    QualityFactor = 1, FilterOrder = 2);
-% [f, e] = butter(2, [5 7]/(fs/2), 'bandpass');
+%[f, e] = designNotchPeakIIR(Response = "peak",...
+%    CenterFrequency = 1.3 / Fnyq, ...
+%    QualityFactor = 1, FilterOrder = 2);
+[f, e] = butter(4, [1 5]/(fs/2), 'bandpass');
 %eeg_delta = filtfilt(f, e, raw);
 eeg_delta_open = filtfilt(f, e, raw_open);
 eeg_delta_closed = filtfilt(f, e, raw_closed);
 
 % Theta: Center frequency = 4.2
-[h, g] = designNotchPeakIIR(Response = "peak",...
-    CenterFrequency = 4.2 / Fnyq, ...
-    QualityFactor = 2, FilterOrder = 2);
-% [h, g] = butter(2, [1 4]/(fs/2), 'bandpass');
+%[h, g] = designNotchPeakIIR(Response = "peak",...
+%    CenterFrequency = 4.2 / Fnyq, ...
+%    QualityFactor = 2, FilterOrder = 2);
+[h, g] = butter(4, [4 8]/(fs/2), 'bandpass');
 %eeg_theta = filtfilt(h, g, raw);
 eeg_theta_open = filtfilt(h, g, raw_open);
 eeg_theta_closed = filtfilt(h, g, raw_closed);
