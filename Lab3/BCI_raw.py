@@ -160,9 +160,24 @@ class EnhancedBCIClassifier:
         else:
             X_selected = X_scaled
         
+    # Train the model
+    def fit(self, X, y):
+        """Train the model"""
+        # Standardization
+        X_scaled = self.scaler.fit_transform(X)
+        
+        # Feature selection
+        if self.feature_selector is not None:
+            X_selected = self.feature_selector.fit_transform(X_scaled, y)
+        else:
+            X_selected = X_scaled
+        
         # Train the model
         self.model.fit(X_selected, y)
         # === student postprocessing === 
+        # Create a small stratified validation split (14%) from the training fold, predict probabilities on the validation set.
+        # Sweep ROC thresholds and pick the one that maximizes Youden’s J (TPR − FPR),
+        # 
         try:
             from sklearn.model_selection import StratifiedShuffleSplit  
             from sklearn.metrics import roc_curve
@@ -178,7 +193,7 @@ class EnhancedBCIClassifier:
             else:
                 self.threshold_ = 0.5
         except Exception:
-            self.threshold_ = 0.5
+            self.threshold_ = 0.5   #If anything fails or the threshold is invalid, safely fall back to 0.5.
         # === student postprocessing ===
         return self
 
