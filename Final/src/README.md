@@ -1,6 +1,6 @@
-### How to use the classifier
+# How to use the classifier
 
-```
+```python
 
 def on_data_received(packet):
     """
@@ -14,7 +14,7 @@ def on_data_received(packet):
         
         # 處理輸出...
         if bci_state == 1:
-            print(f"🔥 專注 (數值: {sample})")
+            print(f"Focus")
 # main
 system = IntegratedSystem(MODEL_PATH, fs=512)
 ```
