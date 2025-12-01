@@ -40,8 +40,8 @@ class Config:
     SVM_COEF0 = 1.0
     SVM_GAMMA = 'scale'
     SVM_PROBABILITY = True
-    SVM_CLASS_WEIGHT = {0: 1.2, 1: 1.0} # 稍微加重專注的權重
-    
+    SVM_CLASS_WEIGHT = {0: 1.0, 1: 1.3} # 稍微加重專注的權重
+    # !可能要改成{0: 1.0, 1: 1.3}, 避免將放鬆錯判成專注
     RANDOM_STATE = 42
 
 # === 2. 訊號處理函數群 (必須與推論時完全一致) ===
