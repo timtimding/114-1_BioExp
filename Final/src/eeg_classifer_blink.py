@@ -7,12 +7,14 @@ from collections import deque
 from scipy import signal
 from scipy.integrate import simpson
 from scipy.stats import entropy
+MODEL_PATH = 'bci_system_v1.pkl'
+TEST_FILE = "blink_data/blink_3.txt"
 
-# === Import blink detector ===
 try:
-    from realtime_blink_detector import RealTimeBlinkDetector
+    from realtime_blink_detector_brainlink import RealTimeBlinkDetector     # BrainLink
+    # from realtime_blink_detector import RealTimeBlinkDetector               # BIOPAC
 except ImportError:
-    print("File 'realtime_blink_detector.py' not found, check if it's in /src.")
+    print("File 'realtime_blink_detector_brainlink.py' not found, check if it's in /src.")
     sys.exit(1)
 
 # === BCI extract features ===
@@ -45,7 +47,6 @@ def extract_features_single(segment, fs, bands, f_list):
         elif name == 'TB_Ratio': vec.append(np.log10(t/(b+EPS)))
         elif name == 'A_sum_ABT': vec.append(np.log10(a/(a+b+t+EPS)))
         elif name == 'Spec_Entropy': vec.append(ent)
-        elif name == 'Hjorth_Activity': vec.append(np.log10(v0+EPS))
         elif name == 'Hjorth_Mobility': vec.append(mob)
         elif name == 'Hjorth_Complexity': vec.append(comp)
         else: vec.append(0.0)
@@ -102,52 +103,53 @@ class BCIEngine:
         
         return final_pred
 
-# 4. Integrated system
+# 4. Integrated system (Blink detector & EEG-based Classifier)
 class IntegratedSystem:
-    def __init__(self, model_path, blink_threshold=80, fs=500):
+    def __init__(self, model_path, blink_threshold=-180, fs=512):
         self.fs = fs
         
         # === Model 1: RealTimeBlinkDetector ===
-        self.blink_detector = RealTimeBlinkDetector(fs=fs, threshold=blink_threshold)
-        self.blink_detector.reset_drop = 150
+        self.blink_detector = RealTimeBlinkDetector(fs=fs, threshold=blink_threshold)   # Brainlink
+        # self.blink_detector = RealTimeBlinkDetector(fs=500, threshold=80)               # BIOPAC
+        # self.blink_detector.reset_drop = 150
         
         # === Model 2: BCI engine ===
         self.bci_engine = BCIEngine(model_path)
         
-        # 系統參數
-        self.bci_update_interval = int(0.25 * fs) # 每 0.25s 更新一次 BCI
+        # System parameters
+        self.bci_update_interval = int(0.25 * fs) # Update BCI result every 0.25 second
         self.bci_accumulator = []
         
-        # 凍結機制 (Freeze Mechanism)
+        # Freeze Mechanism
         self.freeze_timer = 0
-        self.FREEZE_DURATION = int(0.5 * fs) # 偵測到眨眼後，凍結 BCI 輸出 0.5 秒
-        self.last_output = 0 # 預設為放鬆
+        self.FREEZE_DURATION = int(0.5 * fs) # BCI output is disable within 0.5s after blink is detected
+        self.last_output = 0
 
     def process_sample(self, sample):
         """
-        輸入: 單一個採樣點 (float)
-        輸出: (blink_moving_avg, blink_state, bci_state)
+        Input: single data point
+        Output: (blink_moving_avg, blink_state, bci_state)
         """
-        # 1. 執行眨眼偵測 (每點都做)
+        # 1. Blink detection
         blink_state = self.blink_detector.update(sample)
-        blink_ma = self.blink_detector.debug_avg # 取得模組內部的移動平均值 (用於畫圖)
+        blink_ma = self.blink_detector.debug_avg # Moving average for plotting result
         
-        # 2. 如果發現眨眼 (Rising Edge)，啟動凍結計時器
+        # 2. Start "freezing" if the start of a blink is detected
         if blink_state == 1:
             self.freeze_timer = self.FREEZE_DURATION
             
-        # 3. 倒數計時
+        # 3. Freezing counter
         if self.freeze_timer > 0:
             self.freeze_timer -= 1
             
-        # 4. 累積數據給 BCI
+        # 4. Accumulate data for BCI
         self.bci_accumulator.append(sample)
         
-        # 5. 檢查是否該執行 BCI (每 0.25s)
+        # 5. Run BCI or not (every 0.25s)
         current_bci = self.last_output
         
         if len(self.bci_accumulator) >= self.bci_update_interval:
-            
+            # print("buffer loaded!")   # Check if the buffer updates correctly
             if self.freeze_timer == 0:
                 # === 正常模式：執行預測 ===
                 pred = self.bci_engine.update(self.bci_accumulator)
@@ -156,53 +158,43 @@ class IntegratedSystem:
                     current_bci = pred
             else:
                 # === 凍結模式：維持原判 ===
-                # (不呼叫 update，節省算力，並避免雜訊汙染 Buffer 導致後續誤判)
-                # 但這裡為了讓 BCI 的 Buffer 保持推進 (Slide)，我們還是要 update，只是忽略結果
-                # 或者，更簡單的做法：直接忽略這次計算
-                # 這裡選擇：僅推進 Buffer 但不採納結果
-                self.bci_engine.buffer.extend(self.bci_accumulator) 
+                # 這裡選擇：繼續塞東西到 Buffer 裡，但不理會 BCI classifier 的輸出結果
+                self.bci_engine.buffer.extend(self.bci_accumulator)
                 current_bci = self.last_output
             
-            # 清空累積器
+            # Empty buffer
             self.bci_accumulator = []
             
         return blink_ma, blink_state, current_bci
 
-# ==========================================
-# 5. 主程式：載入檔案、模擬與繪圖
-# ==========================================
+# Main (For module testing with external waveform files)
 def main():
-    # 設定路徑
-    MODEL_PATH = 'bci_system_v1.pkl'
-    
-    TEST_FILE = "blink_data/blink_3.txt" 
-    
     if not os.path.exists(MODEL_PATH):
         print("No model found, please train first")
         return
 
-    # 載入資料
+    # Load data
     if os.path.exists(TEST_FILE):
         print(f"Reading file: {TEST_FILE}")
         raw_data = np.loadtxt(TEST_FILE)
-        # raw_data = raw_data[:500*30] # 只取前 30 秒測試
     else:
+        # Generate simulated data if no file loaded.
         print("No file detected, use simulated data...")
         t = np.linspace(0, 10, 5000)
         raw_data = np.sin(2*np.pi*10*t) * 20 + np.random.normal(0, 5, 5000)
-        raw_data[2000:2200] += 300 # 模擬一個大眨眼
+        raw_data[2000:2200] += 300
 
-    # 初始化系統
+    # Initialization
     system = IntegratedSystem(MODEL_PATH, blink_threshold=80)
     
-    # 紀錄變數 (用於繪圖)
+    # Variables for plotting
     log_blink_ma = []
     log_blink_st = []
     log_bci_st = []
     
-    print(f"🚀 開始處理 {len(raw_data)} 個採樣點...")
+    print(f"Start processing {len(raw_data)} samples...")
     
-    # === 模擬串流迴圈 ===
+    # Simulate data stream
     for sample in raw_data:
         b_ma, b_st, bci_st = system.process_sample(sample)
         
@@ -210,14 +202,13 @@ def main():
         log_blink_st.append(b_st)
         log_bci_st.append(bci_st)
         
-    print("✅ 處理完成，正在繪圖...")
+    print("Simulation done! Plotting the result...")
 
-    # === 繪圖 ===
+    # Plot results
     t = np.arange(len(raw_data)) / 500
     fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
     
-    # 圖 1: 原始訊號 + 眨眼移動平均
-    # 為了方便觀察，原始訊號扣掉平均值
+    # Fig 1: Raw data & moving average
     axes[0].plot(t, raw_data - np.mean(raw_data), color='#CCCCCC', label='Raw EEG', lw=0.8)
     axes[0].plot(t, log_blink_ma, color='orange', label='Blink Detector MA', lw=1.5)
     axes[0].axhline(system.blink_detector.threshold_high, color='red', linestyle='--', label='Threshold')
@@ -225,20 +216,20 @@ def main():
     axes[0].legend(loc='upper right')
     axes[0].set_ylabel('Amplitude (uV)')
     
-    # 圖 2: 眨眼判讀 (0/1)
+    # Fig 2: Blink detection result
     axes[1].fill_between(t, log_blink_st, color='red', alpha=0.3, step='post')
     axes[1].step(t, log_blink_st, color='red', label='Blink Detected')
     axes[1].set_title('Blink Output')
     axes[1].set_ylabel('State')
     axes[1].set_ylim(-0.1, 1.1)
     
-    # 圖 3: BCI 專注判讀 (0/1) + 凍結區間標示
+    # Fig 3: BCI Classifier output (0/1) & Segments interrupted by blinks
     axes[2].fill_between(t, log_bci_st, color='green', alpha=0.3, step='post')
     axes[2].step(t, log_bci_st, color='green', label='Focus State (BCI)')
     
     # 標示 "凍結區間" (只要有眨眼的地方，BCI 應該是水平直線)
     blink_mask = np.array(log_blink_st) > 0
-    # 這裡簡單用眨眼發生當下標示，實際凍結時間會比這更長 (延後 2秒)
+    # 這裡簡單用眨眼發生當下標示，實際凍結時間會比這更長 (延後 0.5秒)
     # 為了視覺化清楚，我們畫出 "潛在影響區"
     axes[2].fill_between(t, 0, 1, where=blink_mask, color='gray', alpha=0.2, transform=axes[2].get_xaxis_transform(), label='Blink Occurred')
 
@@ -249,6 +240,7 @@ def main():
     axes[2].legend(loc='upper right')
     
     plt.tight_layout()
+    plt.savefig("Classifier&Blink.png", dpi=300, bbox_inches='tight')
     plt.show()
 
 if __name__ == "__main__":
