@@ -1,20 +1,20 @@
 # How to use the classifier
 
 ```python
-
 def on_data_received(packet):
-    """
-    當硬體收到一包數據時會呼叫此函數
-    packet: 可能是一個包含 50 個 float 的 list
-    """
-    # 直接用迴圈把這一包 "倒" 進去系統
-    for sample in packet:
-        # 假設 sample 是單一頻道的數值 (float)
-        b_avg, b_state, bci_state = system.process_sample(sample)
+    # Clarify basic information here
+    system = IntegratedSystem(model_path = MODEL_PATH, blink_threshold = BLINK_THRESHOLD, fs = 512)    
+    while True:
+        # processing data (e.g. parsing packets)
+        # put anything you need here
         
-        # 處理輸出...
-        if bci_state == 1:
-            print(f"Focus")
-# main
-system = IntegratedSystem(MODEL_PATH, fs=512)
+        for sample in packet:
+            b_avg, b_state, bci_state = system.process_sample(sample)
+            if bci_state == 1:    # 1 -> focus, 0 -> Relaxed
+                print(f"Focus")
+            if b_state == 1:      # 1 -> blink detected
+                print("Blink detected!")
 ```
+
+## About BrainLink2Classifier
+This part is implimented by brutally parsing the packets received via Bluetooth (well it's not encoded, HOW?). Only a few pieces of data we need are extracted, and there are a lot more in `neurosky_reader.py`.
