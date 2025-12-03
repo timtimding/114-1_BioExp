@@ -43,9 +43,12 @@ t9_keyboard/
 
 ## Running the Application
 
-1. Install Flask:
+1. Install Flask and nltk:
    ```bash
    pip install flask
+   ```
+   ```bash
+   pip install nltk
    ```
 
 2. Run the server:
@@ -81,3 +84,5 @@ Currently uses keyboard input to simulate ML states. In the future:
 - **Poll interval**: Change `POLL_INTERVAL` in `script.js` (default: 100ms)
 - **Word list**: Modify `_get_hardcoded_words()` in `app.py`
 - **Styling**: Edit `static/style.css`
+
+## Enjoy your hands-free typing experience!
