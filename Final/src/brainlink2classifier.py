@@ -11,7 +11,7 @@ except ImportError:
     print("[Error] eeg_classifer_blink.py not found.")
     sys.exit(1)
 
-class NeuroSkyDriver:
+class BrainLink2Classifier:
     def __init__(self, port='COM4', baud=57600, model_path='bci_system_v1.pkl',
                  fs=512, timeout=0.8, max_count=3, cooldown=2.0):
         """
