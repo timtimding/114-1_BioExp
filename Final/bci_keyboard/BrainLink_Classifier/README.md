@@ -17,6 +17,12 @@ def on_data_received(packet):
 ```
 
 ## About BrainLink2Classifier
-This part is implimented by brutally parsing the packets received via Bluetooth (well it's not encoded, HOW?). Only a few pieces of data we need are extracted, and there are a lot more in `neurosky_reader.py`.
 
-## Simple example is presented in `bci_main.py`.
+This part is implimented by brutally parsing the packets received via Bluetooth (well it's not encoded, HOW?). Only a few pieces of data we need are extracted, and there are a lot more in `neurosky_reader.py`.
+A simple example is presented in `bci_main.py`.
+
+## How to find the connection port
+
+1. Pair BrainLink device via Bluetooth.
+2. Open `Device Manager -> Ports (COM & LPT)` on your computer.
+3. If you see `COM{n}` and `COM{n+1}`, use `COM{n}`.
