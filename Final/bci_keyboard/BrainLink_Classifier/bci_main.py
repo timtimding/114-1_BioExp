@@ -1,5 +1,5 @@
 import time
-from brainlink2classifier import BrainLink2Classifier
+from Final.bci_keyboard.BrainLink_Classifier.brainlink2classifier import BrainLink2Classifier
 
 # ==========================================
 # 1. 定義一個函式來接收結果

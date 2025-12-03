@@ -18,3 +18,5 @@ def on_data_received(packet):
 
 ## About BrainLink2Classifier
 This part is implimented by brutally parsing the packets received via Bluetooth (well it's not encoded, HOW?). Only a few pieces of data we need are extracted, and there are a lot more in `neurosky_reader.py`.
+
+## Simple example is presented in `bci_main.py`.
