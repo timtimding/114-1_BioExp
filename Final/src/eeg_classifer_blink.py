@@ -7,6 +7,8 @@ from collections import deque
 from scipy import signal
 from scipy.integrate import simpson
 from scipy.stats import entropy
+import time
+
 MODEL_PATH = 'bci_system_v1.pkl'
 TEST_FILE = "blink_data/blink_3.txt"
 
@@ -16,6 +18,59 @@ try:
 except ImportError:
     print("File 'realtime_blink_detector_brainlink.py' not found, check if it's in /src.")
     sys.exit(1)
+
+# Blink counter
+class BlinkSequenceDetector:
+    def __init__(self, timeout=0.8, max_count=3, cooldown=2.0):
+        self.timeout = timeout          # 超過 0.8秒 沒眨眼視為序列結束
+        self.maxcount = max_count       # 單一序列中最多連續眨眼次數
+        self.cooldown_dura = cooldown   # 這次眨眼序列結束後要等的秒數
+        
+        self.counter = 0                # 當前累積次數
+        self.last_blink_time = 0        # 上一次眨眼時間
+        self.prev_state = 0             # 邊緣偵測用
+        self.cooldown_timer = 0         # 等他歸零才會開始下一次序列
+    
+    def update(self, blink_state):
+        """
+        輸入: blink_state (0 or 1)
+        輸出: final_result (0=無結果, 1=單擊確認, 2=雙擊確認...)
+        """
+        current_time = time.time()
+        output = 0
+        
+        # 0. 檢查是否在冷卻中
+        if self.cooldown_timer > 0:
+            if current_time < self.cooldown_timer:
+                self.prev_state = blink_state # 重要：更新狀態以防冷卻結束瞬間誤判
+                return 0 
+            else:
+                self.cooldown_timer = 0 # 冷卻結束
+                
+        # 1. 偵測 Rising Edge (0 -> 1)
+        # 只有在訊號剛變為 1 的那個瞬間才計數
+        if blink_state == 1 and self.prev_state == 0:
+            self.counter += 1
+            self.last_blink_time = current_time
+            # print(f"Blink count: {self.counter}") 
+
+            # 檢查是否達到最大次數 (例如 3)
+            if self.counter >= self.maxcount:
+                output = self.counter
+                self.counter = 0
+                self.cooldown_timer = current_time + self.cooldown_dura
+                # print(f"Max count reached! Cooldown for {self.cooldown_dura}s")
+
+        # 2. 檢查超時 (Timeout)
+        # 如果當前沒有新的眨眼 (或是訊號持續為1但沒觸發新計數)，且距離上次已超時
+        elif self.counter > 0 and (current_time - self.last_blink_time > self.timeout):
+            # 只有當訊號已經回到 0 或者是維持狀態時才結算
+            # 這裡簡單判斷時間即可，因為如果正在眨眼(state=1)，counter不會增加，時間差也不會重置
+            output = self.counter
+            self.counter = 0
+
+        self.prev_state = blink_state
+        return output
 
 # === BCI extract features ===
 def get_band_power(epoch, fs, bands):
@@ -105,7 +160,7 @@ class BCIEngine:
 
 # 4. Integrated system (Blink detector & EEG-based Classifier)
 class IntegratedSystem:
-    def __init__(self, model_path, blink_threshold=-180, fs=512):
+    def __init__(self, model_path, blink_threshold=-180, fs=512, timeout=0.8, max_count=3, cooldown=2.0):
         self.fs = fs
         
         # === Model 1: RealTimeBlinkDetector ===
@@ -116,6 +171,10 @@ class IntegratedSystem:
         # === Model 2: BCI engine ===
         self.bci_engine = BCIEngine(model_path)
         
+        # === Model 3: Blink counter ===
+        self.seq_detector = BlinkSequenceDetector(timeout=timeout, max_count=max_count, cooldown=cooldown) # 0.8秒內沒連點算結束
+
+
         # System parameters
         self.bci_update_interval = int(0.25 * fs) # Update BCI result every 0.25 second
         self.bci_accumulator = []
@@ -133,7 +192,8 @@ class IntegratedSystem:
         # 1. Blink detection
         blink_state = self.blink_detector.update(sample)
         blink_ma = self.blink_detector.debug_avg # Moving average for plotting result
-        
+        blink_seq_count = self.seq_detector.update(blink_state)
+
         # 2. Start "freezing" if the start of a blink is detected
         if blink_state == 1:
             self.freeze_timer = self.FREEZE_DURATION
@@ -165,7 +225,7 @@ class IntegratedSystem:
             # Empty buffer
             self.bci_accumulator = []
             
-        return blink_ma, blink_state, current_bci
+        return blink_ma, blink_state, current_bci, blink_seq_count
 
 # Main (For module testing with external waveform files)
 def main():

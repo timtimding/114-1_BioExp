@@ -1,177 +1,211 @@
-# In this program, I tried to brutally teardown the package
-# received via bluetooth and extract raw-data part, according
-# to the protocals in BrainLink developer documentation.
-
 import serial
-import time
-import numpy as np
-from eeg_classifer_blink import IntegratedSystem # 您的 AI 系統
-from bci_dashboard import BCIDashboard
-
 import threading
-from blink_plotter import blinkPlotter
+import time
+import struct
+import sys
 
-COM_PORT = 'COM4' 
-BAUD_RATE = 57600
-BLINK_THRESHOLD = -160
-FS = 512
-MODEL_PATH = 'bci_system_v1.pkl'
+# 嘗試引用您的整合系統
+try:
+    from eeg_classifer_blink import IntegratedSystem
+except ImportError:
+    print("[Error] eeg_classifer_blink.py not found.")
+    sys.exit(1)
 
-def parse_neurosky_stream(dash):
-    # Initialize the system
-    try:
-        bci_system = IntegratedSystem(model_path=MODEL_PATH, blink_threshold=BLINK_THRESHOLD, fs=FS)
-        print("AI System Loaded.")
-    except Exception as e:
-        print(f"AI Init Failed: {e}")
-        return
+class NeuroSkyDriver:
+    def __init__(self, port='COM4', baud=57600, model_path='bci_system_v1.pkl',
+                 fs=512, timeout=0.8, max_count=3, cooldown=2.0):
+        """
+        初始化 NeuroSky 驅動程式
+        :param port: 藍芽 COM Port
+        :param baud:鮑率 (預設 57600)
+        :param model_path: BCI 模型路徑
+        """
+        self.port = port
+        self.baud = baud
+        self.model_path = model_path
+        
+        self.running = False
+        self.thread = None
+        self.ser = None
+        self.bci_system = None
 
-    # Connect to Bluetooth Serial Port
-    try:
-        ser = serial.Serial(COM_PORT, BAUD_RATE, timeout=1)
-        print(f"Connected to {COM_PORT}")
-    except serial.SerialException:
-        print(f"Could not connect to {COM_PORT}. Check bluetooth pairing.")
-        return
+        self.fs = fs
+        self.threshold = -170
+        self.timeout = timeout
+        self.max_count = max_count
+        self.cooldown = cooldown
+        
+        # === 輸出狀態緩存 ===
+        self._current_focus = False  # True=專注, False=放鬆
+        self._last_blink_cmd = 0     # 最近一次的眨眼指令 (0, 1, 2, 3...)
+        
+        # === Callback 函式 ===
+        # 格式: func(is_focus: bool, blink_count: int)
+        self.callback = None 
 
-    print("Starting packet parsing...")
-    
-    # Buffer
-    buffer = b''
+    def start(self):
+        """啟動監聽執行緒"""
+        if self.running:
+            print("Driver is already running.")
+            return
 
-    while dash._running:
+        # 1. Initializaiton of AI
+        print("Loading AI Model...")
         try:
-            while True:
-                # Read the data in Serial Port
-                if ser.in_waiting > 0:
-                    buffer += ser.read(ser.in_waiting)
+            self.bci_system = IntegratedSystem(
+                model_path=self.model_path,
+                blink_threshold=self.threshold,
+                fs=self.fs,
+                timeout=self.timeout,           # 連點判斷時間
+                max_count=self.max_count,       # 最大連點數
+                cooldown=self.cooldown          # 冷卻時間
+            )
+        except Exception as e:
+            print(f"[Error] AI Init Failed: {e}")
+            return
+
+        # 2. Start Serial Port
+        try:
+            self.ser = serial.Serial(self.port, self.baud, timeout=1)
+            print(f"Connected to {self.port}")
+        except serial.SerialException as e:
+            print(f"[Error] Serial Open Failed: {e}")
+            return
+
+        # 3. 啟動執行緒
+        self.running = True
+        self.thread = threading.Thread(target=self._process_loop)
+        self.thread.daemon = True # 設定為守護執行緒，主程式關閉時自動結束
+        self.thread.start()
+        print("BrainLink Driver Started.")
+
+    def stop(self):
+        """停止監聽"""
+        self.running = False
+        if self.ser and self.ser.is_open:
+            self.ser.close()
+        if self.thread:
+            self.thread.join(timeout=2.0)
+        print("BrainLink Driver Stopped.")
+
+    def set_callback(self, func):
+        """
+        設定回調函式，當有新狀態時觸發。
+        func signature: def my_callback(is_focus, blink_count):
+        """
+        self.callback = func
+
+    def _process_loop(self):
+        """後台處理迴圈 (暴力拆包 + AI 推論)"""
+        buffer = b''
+        
+        while self.running:
+            try:
+                if self.ser.in_waiting > 0:
+                    buffer += self.ser.read(self.ser.in_waiting)
                     
-                    # ---------------------------------------------------------
-                    # BRUTAL TEARDOWN (according to read_packets() in neuroskylab.m)
-                    # ---------------------------------------------------------
-                    while len(buffer) >= 3: # 至少要有 AA AA [Length]
-                        # 1. Find synchronous header AA AA
-                        # MATLAB: inds = strfind(A', [170 170])
+                    # --- 暴力拆包邏輯 ---
+                    while len(buffer) >= 3:
+                        # 1. 找同步標頭 AA AA
                         try:
                             idx = buffer.index(b'\xaa\xaa')
                         except ValueError:
-                            # 沒找到，保留最後一個 byte (怕剛好切在 AA 之間)，其他丟掉
-                            buffer = buffer[-1:]
+                            buffer = buffer[-1:] # 沒找到，留最後一個 byte
                             continue
                         
-                        # Dump junks before AA AA
-                        if idx > 0:
+                        if idx > 0: 
                             buffer = buffer[idx:]
                         
-                        # Length byte (AA AA [Len])
-                        if len(buffer) < 3:
-                            break # Wait
-                            
-                        # Get the length of Payload
-                        # MATLAB: value_length = packet(packet_index)
+                        if len(buffer) < 3: 
+                            break
+                        
+                        # 2. 讀取長度與檢查完整性
                         payload_len = buffer[2]
+                        packet_len = 2 + 1 + payload_len + 1 # Header + Len + Payload + Checksum
                         
-                        # Make sure that complete package is in the Buffer
-                        # (Header(2) + Len(1) + Payload(Len) + Checksum(1))
-                        packet_len = 2 + 1 + payload_len + 1
+                        if len(buffer) < packet_len: 
+                            break # 資料不夠，等下一輪
                         
-                        if len(buffer) < packet_len:
-                            break # 尚未完全收到
-                            
-                        # 3. Get complete Payload
+                        # 3. 取出 Payload
                         payload = buffer[3 : 3+payload_len]
-                        checksum_byte = buffer[3+payload_len]
                         
-                        
-                        # 4. Parse Payload
-                        # Imitate the logic of parse_packet() in MATLAB
+                        # 4. 解析內容
                         i = 0
                         while i < len(payload):
                             code = payload[i]
                             i += 1
                             
-                            # single- or multi- byte data
-                            # MATLAB: if( datarow_code >= 128 )
-                            if code >= 0x80: 
-                                # multi-byte data, the next byte is the length
+                            if code >= 0x80: # Multi-byte
                                 if i >= len(payload): break
                                 v_len = payload[i]
                                 i += 1
                                 if i + v_len > len(payload): break
-                                
                                 val_bytes = payload[i : i+v_len]
                                 
-                                # === Get Raw Wave (Code 0x80 / 128) ===
+                                # === 關鍵：Raw Wave (0x80) ===
                                 if code == 0x80:
-                                    # MATLAB: payloadBuffer(3)*256+payloadBuffer(4)
-                                    # 16-bit Big Endian Signed Integer
                                     raw_val = int.from_bytes(val_bytes, byteorder='big', signed=True)
                                     
-                                    blink_ma, blink_st, bci_st = bci_system.process_sample(raw_val)
+                                    # === AI 處理 ===
+                                    # process_sample 回傳: (ma, blink_st, bci_st, blink_seq_count)
+                                    _, _, bci_st, seq_cnt = self.bci_system.process_sample(raw_val)
                                     
-                                    # 存取底層 Blink Detector 的除錯變數
-                                    # try:
-                                    #     debug_avg = bci_system.blink_detector.debug_avg
-                                    # except:
-                                    #     debug_avg = 0 # 若無法取得則補0
-                                    # plotter.add_data(debug_avg, blink_st)
+                                    # 更新狀態
+                                    # bci_st: 1=Focus, 0=Relax
+                                    new_focus = True if bci_st == 1 else False
                                     
-                                    if blink_st == 1:
-                                        print(f"*** BLINK! (Val: {raw_val}) ***")
-                                    # if bci_st == 1:
-                                        # print("Focus...")
-                                    # else: print("Relaxed...")
-                                    if bci_st:
-                                        dash.is_focus = True
-                                        dash.is_relax = False
-                                    else:
-                                        dash.is_focus = False
-                                        dash.is_relax = True
-                    
-                                    # 假設 blink_detected 為 True
-                                    if blink_st:
-                                        dash.blink_triggered = True
+                                    # 觸發 Callback 的條件：
+                                    # 1. 眨眼指令產生 (seq_cnt > 0)
+                                    # 2. 或者 專注狀態改變 (選擇性，也可以每一幀都回傳)
+                                    
+                                    if seq_cnt > 0 or new_focus != self._current_focus:
+                                        self._current_focus = new_focus
+                                        if self.callback:
+                                            # 回傳: (專注狀態, 眨眼指令次數)
+                                            # seq_cnt 只有在觸發瞬間會是 1, 2, 3，其餘時間是 0
+                                            self.callback(self._current_focus, seq_cnt)
+                                
                                 i += v_len
-                            else:
-                                # 單 byte 數據 (例如訊號品質 0x02, 電量 0x01)
+                            else: # Single-byte
                                 if i >= len(payload): break
-                                val = payload[i]
-                                
-                                # Signal Quality (Code 0x02) is available here
-                                # if code == 0x02:
-                                #     print(f"Signal Poor: {val}") # 0 -> best，200 -> not on the head
-                                
+                                # val = payload[i] 
+                                # 這裡可以處理 Signal Quality (Code 0x02)
                                 i += 1
-
-                        # Remove this package
+                        
+                        # 處理完移除封包
                         buffer = buffer[packet_len:]
-                    
-        except KeyboardInterrupt:
-            print("Stopped.")
-            ser.close()
-def main():
-    # Plot for Classifier & blink detection
-    dash = BCIDashboard()
-    t = threading.Thread(target=parse_neurosky_stream, args=(dash,))
-    
-    # 設定為 Daemon (守護執行緒)，這樣主程式關閉時它會自動跟著關閉
-    t.daemon = True 
-    t.start()
-    dash.start()
+                else:
+                    time.sleep(0.001) # 避免 CPU 100%
 
-    # Plot for blink detection
-    # # 1. 初始化繪圖器 (設定閾值與範圍)
-    # # threshold 設為 -150，Y 軸範圍設為 -400~200
-    # plotter = blinkPlotter(buffer_len=1500, threshold=BLINK_THRESHOLD, y_range=(-1000, 1000))
-    
-    # # 2. 啟動後台處理執行緒
-    # t = threading.Thread(target=parse_neurosky_stream, args=(plotter,))
-    # t.daemon = True # 設定為 daemon，主程式關閉時它也會關閉
-    # t.start()
-    
-    # # 3. 啟動 GUI (這會阻斷主執行緒)
-    # print("Launching Plotter...")
-    # plotter.start()
-if __name__ == "__main__":
-    # parse_neurosky_stream()
-    main()
+            except Exception as e:
+                # ==========================================
+                # [新增功能] 斷線重連機制
+                # ==========================================
+                print(f"[Driver Error] Lost connection: {e}")
+                print("Trying to reconnect...")
+                
+                # 1. 先嘗試安全關閉舊連線
+                try:
+                    if self.ser:
+                        self.ser.close()
+                except:
+                    pass
+                
+                # 2. 進入重試迴圈 (直到連上或程式被關閉)
+                reconnected = False
+                while self.running and not reconnected:
+                    try:
+                        time.sleep(2.0) # Try every 2 seconds
+                        
+                        # Try restart Serial
+                        self.ser = serial.Serial(self.port, self.baud, timeout=1)
+                        
+                        # 若成功執行到這行，代表連上了
+                        print(f"[Driver Info] Successfully reconnect! {self.port}!")
+                        buffer = b'' # 清空舊緩衝區，避免資料錯亂
+                        reconnected = True
+                        
+                    except serial.SerialException:
+                        print(f"Fail to reconnect... retry in 2 seconds")
+                    except Exception as ex:
+                        print(f"Unexpected error: {ex}")
