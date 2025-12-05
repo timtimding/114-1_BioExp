@@ -1,5 +1,7 @@
 # How to use the classifier
 
+You can use the classifier core only or the whole suite (Bluetooth connection is included).
+
 ```python
 def on_data_received(packet):
     # Clarify basic information here

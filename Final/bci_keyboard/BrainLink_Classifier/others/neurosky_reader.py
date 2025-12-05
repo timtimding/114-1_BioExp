@@ -1,7 +1,7 @@
 import serial
 import time
 import struct
-from eeg_classifer_blink import BCIEngine
+from Final.bci_keyboard.eeg_classifer_blink import BCIEngine
 
 # ==========================================
 # 設定區

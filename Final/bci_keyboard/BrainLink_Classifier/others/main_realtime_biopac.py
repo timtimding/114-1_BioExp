@@ -4,7 +4,7 @@ import numpy as np
 # === 1. 引用您寫好的大腦 ===
 # 假設您上一份程式碼存檔為 "main_integrated.py"
 try:
-    from eeg_classifer_blink import IntegratedSystem
+    from Final.bci_keyboard.eeg_classifer_blink import IntegratedSystem
 except ImportError:
     print("Cannot find'main_integrated.py', please check the path.")
     exit()

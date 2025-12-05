@@ -2,8 +2,6 @@ import time
 import numpy as np
 import os
 
-# === 1. 引用您寫好的大腦 ===
-# 假設您上一份程式碼存檔為 "main_integrated.py"
 try:
     from eeg_classifer_blink import IntegratedSystem
 except ImportError:

@@ -5,7 +5,7 @@
 import serial
 import time
 import numpy as np
-from eeg_classifer_blink import IntegratedSystem # 您的 AI 系統
+from Final.bci_keyboard.eeg_classifer_blink import IntegratedSystem # 您的 AI 系統
 from bci_dashboard import BCIDashboard
 
 import threading

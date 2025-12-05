@@ -8,12 +8,17 @@ from collections import defaultdict
 import re
 
 try:
-    from BrainLink_Classifier.brainlink2classifier import BrainLink2Classifier
+    from brainlink2classifier import BrainLink2Classifier
     BCI_AVAILABLE = True
 except ImportError:
-    print("Warning: 'neurosky_driver.py' not found. BCI features disabled.")
+    print("Warning: 'brainlink2classifier.py' not found. BCI features disabled.")
     BCI_AVAILABLE = False
 
+TIMEOUT = 0.7
+COOLDOWN = 1.7
+PORT = 'COM4'
+MODEL_PATH = 'bci_system_v1.pkl'
+SCAN_SPEED = 2.0
 
 app = Flask(__name__)
 
@@ -134,12 +139,12 @@ def build_ngrams():
         'fivegrams': fivegrams
     }
     
-    print(f"✓ Built n-gram models:")
-    print(f"  - Unigrams: {len(unigrams)} words")
-    print(f"  - Bigrams: {len(bigrams)} contexts")
-    print(f"  - Trigrams: {len(trigrams)} contexts")
-    print(f"  - 4-grams: {len(fourgrams)} contexts")
-    print(f"  - 5-grams: {len(fivegrams)} contexts")
+    # print(f"✓ Built n-gram models:")
+    # print(f"  - Unigrams: {len(unigrams)} words")
+    # print(f"  - Bigrams: {len(bigrams)} contexts")
+    # print(f"  - Trigrams: {len(trigrams)} contexts")
+    # print(f"  - 4-grams: {len(fourgrams)} contexts")
+    # print(f"  - 5-grams: {len(fivegrams)} contexts")
 
 def get_word_completions(prefix, num_suggestions=5):
     """
@@ -435,29 +440,37 @@ else:
     print("✗ Failed to load NLTK data")
 
 # Initialize keyboard
-keyboard = T9KeyboardWithDictionary(scan_speed=0.8)
+keyboard = T9KeyboardWithDictionary(scan_speed=SCAN_SPEED)
 
 def bci_input_handler(is_focus, blink_count):
     """
     這個函式會由 BCI Driver 在後台自動呼叫。
     它直接操作全域變數 'keyboard'，不需透過 HTTP Request。
     """
-    # (選用) 您也可以利用 is_focus 來改變掃描速度
-    # if is_focus: keyboard.scan_speed = 0.5 
-    
+    # Change scan_speed according to state(relaxed/focus)
+    if is_focus:
+        if keyboard.scan_speed != SCAN_SPEED:
+            print("Focus detected! Resuming scan.")
+            keyboard.scan_speed = SCAN_SPEED
+    else:
+        if keyboard.scan_speed != 999:
+            
+            print("Relax detected! Pausing scan.")
+            keyboard.scan_speed = 999
+
     if blink_count > 0:
-        print(f"🧠 [BCI Command] Blink Count: {blink_count}")
+        print(f"[BCI Command] Blink Count: {blink_count}")
         
         # 對應原本 API /api/input/<state> 的邏輯
-        if blink_count == 1:
+        if is_focus and blink_count == 1:
             print(" -> Trigger: State 1 (Cancel/Return)")
             keyboard.handle_state_1()
             
-        elif blink_count == 2:
+        elif is_focus and blink_count == 2:
             print(" -> Trigger: State 2 (Select/Confirm)")
             keyboard.handle_state_2()
             
-        elif blink_count == 3:
+        elif is_focus and blink_count == 3:
             print(" -> Trigger: State 3 (Prediction Mode)")
             keyboard.handle_state_3()
 # ==================================
@@ -465,9 +478,15 @@ def bci_input_handler(is_focus, blink_count):
 def auto_scan():
     """Auto-scanning background thread"""
     keyboard.scanning = True
+
     while keyboard.scanning:
+        # Pause scanning if the state is "relaxed"
+        if keyboard.scan_speed >= 999:
+            time.sleep(0.1)
+            continue
         time.sleep(keyboard.scan_speed)
-        keyboard.scan_next()
+        if keyboard.scan_speed < 999:
+            keyboard.scan_next()
 
 # Start scanning thread
 scan_thread = threading.Thread(target=auto_scan, daemon=True)
@@ -516,18 +535,16 @@ if __name__ == '__main__':
         print("Server starting WITHOUT dictionary (NLTK load failed)")
         print("=" * 60)
     
-    # app.run(debug=True, use_reloader=False)
     bci_driver = None
     if BCI_AVAILABLE:
-        print("=" * 60)
-        print("Starting NeuroSky BCI Driver...")
-        
-        # !!! 請確認您的 COM Port (Windows可能是 COM3/COM4) !!!
-        # 請確認模型路徑是否正確
+        print("Starting BrainLink BCI Driver...")
+
         bci_driver = BrainLink2Classifier(
-            port='COM4',
+            port=PORT,
             baud=57600,
-            model_path='BrainLink_Classifier/bci_system_v1.pkl'
+            timeout=TIMEOUT,
+            cooldown=COOLDOWN,
+            model_path=MODEL_PATH
         )
         
         # 設定我們剛剛寫好的處理函式
