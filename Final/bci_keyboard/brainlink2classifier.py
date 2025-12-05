@@ -12,7 +12,7 @@ except ImportError:
 
 class BrainLink2Classifier:
     def __init__(self, port='COM4', baud=57600, model_path='bci_system_v1.pkl',
-                 fs=512, timeout=0.8, max_count=3, cooldown=2.0):
+                 fs=512, timeout=0.8, max_count=3, cooldown=2.0, threshold=-170):
         self.port = port
         self.baud = baud
         self.model_path = model_path
@@ -23,7 +23,7 @@ class BrainLink2Classifier:
         self.bci_system = None
 
         self.fs = fs
-        self.threshold = -170
+        self.threshold = threshold
         self.timeout = timeout
         self.max_count = max_count
         self.cooldown = cooldown

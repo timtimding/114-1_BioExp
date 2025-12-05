@@ -6,6 +6,7 @@ from nltk.corpus import brown, words
 from nltk.probability import FreqDist
 from collections import defaultdict
 import re
+# import logging
 
 try:
     from brainlink2classifier import BrainLink2Classifier
@@ -19,9 +20,11 @@ COOLDOWN = 1.7
 PORT = 'COM4'
 MODEL_PATH = 'bci_system_v1.pkl'
 SCAN_SPEED = 2.0
+THRESHOLD = -130
 
 app = Flask(__name__)
-
+# log = logging.getLogger('werkzeug')
+# log.setLevel(logging.ERROR)
 # Global data structures
 word_frequencies = {}
 bigrams = defaultdict(lambda: defaultdict(int))
@@ -544,7 +547,8 @@ if __name__ == '__main__':
             baud=57600,
             timeout=TIMEOUT,
             cooldown=COOLDOWN,
-            model_path=MODEL_PATH
+            model_path=MODEL_PATH,
+            threshold=THRESHOLD
         )
         
         # 設定我們剛剛寫好的處理函式
