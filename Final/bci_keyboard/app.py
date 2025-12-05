@@ -6,7 +6,6 @@ from nltk.corpus import brown, words
 from nltk.probability import FreqDist
 from collections import defaultdict
 import re
-# import logging
 
 try:
     from brainlink2classifier import BrainLink2Classifier
@@ -23,8 +22,6 @@ SCAN_SPEED = 2.0
 THRESHOLD = -130
 
 app = Flask(__name__)
-# log = logging.getLogger('werkzeug')
-# log.setLevel(logging.ERROR)
 # Global data structures
 word_frequencies = {}
 bigrams = defaultdict(lambda: defaultdict(int))
